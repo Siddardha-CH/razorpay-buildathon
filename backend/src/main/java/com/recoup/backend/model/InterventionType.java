@@ -1,0 +1,14 @@
+package com.recoup.backend.model;
+
+public enum InterventionType {
+    RETRY_PAYMENT,
+    SEND_ALT_PAYMENT_LINK,
+    SEND_REMINDER_SMS,
+    SEND_REMINDER_WHATSAPP,
+    SEND_REMINDER_EMAIL,
+    HUMAN_ESCALATION,
+    ROUTE_TO_RISK_TEAM,
+    MARK_DO_NOT_CONTACT,
+    STOP_PURSUIT,
+    DEFER_QUIET_HOURS
+}

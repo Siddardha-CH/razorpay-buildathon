@@ -31,8 +31,9 @@ public class BatchController {
     @PostMapping("/api/batches/run")
     public BatchRunResponse run(@RequestParam(defaultValue = "60") int size, @RequestParam(defaultValue = "42") long seed) {
         ZonedDateTime now = ZonedDateTime.now(ZoneOffset.UTC);
-        List<RevenueEvent> events = generator.generateBatch(size, seed, Instant.now());
-        String batchId = pipelineService.runBatch(events, now);
+        String batchId = RecoveryPipelineService.newBatchId();
+        List<RevenueEvent> events = generator.generateBatch(size, seed, Instant.now(), batchId);
+        pipelineService.runBatch(events, now, batchId);
         return new BatchRunResponse(batchId, events.size(), gateway.name());
     }
 }

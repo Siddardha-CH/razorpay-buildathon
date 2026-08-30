@@ -53,13 +53,15 @@ public class RecoveryPipelineService {
         this.auditEntryRepository = auditEntryRepository;
     }
 
+    public static String newBatchId() {
+        return "batch_" + UUID.randomUUID().toString().substring(0, 8);
+    }
+
     @Transactional
-    public String runBatch(List<RevenueEvent> events, ZonedDateTime now) {
-        String batchId = "batch_" + UUID.randomUUID().toString().substring(0, 8);
+    public void runBatch(List<RevenueEvent> events, ZonedDateTime now, String batchId) {
         for (RevenueEvent event : events) {
             processOne(event, batchId, now);
         }
-        return batchId;
     }
 
     private void processOne(RevenueEvent event, String batchId, ZonedDateTime now) {

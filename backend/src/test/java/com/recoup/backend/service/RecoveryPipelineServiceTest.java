@@ -38,10 +38,11 @@ class RecoveryPipelineServiceTest {
 
     @Test
     void processesAFullBatchWithZeroGuardrailViolations() {
-        List<RevenueEvent> events = generator.generateBatch(200, 2026, Instant.now());
+        String batchId = RecoveryPipelineService.newBatchId();
+        List<RevenueEvent> events = generator.generateBatch(200, 2026, Instant.now(), batchId);
         ZonedDateTime now = ZonedDateTime.now(ZoneOffset.UTC);
 
-        String batchId = pipelineService.runBatch(events, now);
+        pipelineService.runBatch(events, now, batchId);
 
         assertThat(caseRepository.findByBatchId(batchId)).hasSize(200);
 
@@ -53,5 +54,23 @@ class RecoveryPipelineServiceTest {
             .isZero();
         assertThat(metrics.recoveredAmountPaise()).isLessThanOrEqualTo(metrics.atRiskAmountPaise());
         assertThat(metrics.recoveryRate()).isBetween(0.0, 1.0);
+    }
+
+    @Test
+    void runningTheSameSeedTwiceDoesNotCollideOnEventId() {
+        // Regression test: event ids used to be derived from (seed, index) alone, so
+        // running the same seed a second time against a database that already held the
+        // first run's rows violated RecoveryCase's unique event_id constraint. Ids are
+        // now salted per-batch while `seed` still determines the generated content.
+        ZonedDateTime now = ZonedDateTime.now(ZoneOffset.UTC);
+
+        String firstBatchId = RecoveryPipelineService.newBatchId();
+        pipelineService.runBatch(generator.generateBatch(20, 555, Instant.now(), firstBatchId), now, firstBatchId);
+
+        String secondBatchId = RecoveryPipelineService.newBatchId();
+        pipelineService.runBatch(generator.generateBatch(20, 555, Instant.now(), secondBatchId), now, secondBatchId);
+
+        assertThat(caseRepository.findByBatchId(firstBatchId)).hasSize(20);
+        assertThat(caseRepository.findByBatchId(secondBatchId)).hasSize(20);
     }
 }

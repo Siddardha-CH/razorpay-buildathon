@@ -57,13 +57,18 @@ public class SyntheticEventGenerator {
         null
     };
 
-    public List<RevenueEvent> generateBatch(int n, long seed, Instant now) {
+    /** {@code runId} salts the generated event ids so re-running the same {@code
+     *  seed} against a database that already holds a prior run's rows doesn't
+     *  collide on primary key -- {@code seed} alone still determines the
+     *  generated content, so two runs with the same seed produce identical
+     *  synthetic data under different ids. */
+    public List<RevenueEvent> generateBatch(int n, long seed, Instant now, String runId) {
         Random rng = new Random(seed);
         List<RevenueEvent> events = new ArrayList<>(n);
 
         for (int i = 0; i < n; i++) {
             EventType type = pickEventType(rng);
-            String eventId = String.format("evt_%s_%04d", seed, i);
+            String eventId = String.format("evt_%s_%04d", runId, i);
             Instant createdAt = now.minusSeconds(60L * 60 * (1 + rng.nextInt(240)));
             Contact contact = randomContact(rng);
             String name = FIRST_NAMES[rng.nextInt(FIRST_NAMES.length)] + " " + LAST_NAMES[rng.nextInt(LAST_NAMES.length)];

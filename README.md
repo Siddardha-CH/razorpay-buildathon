@@ -26,13 +26,15 @@ one:
 1. **Diagnoses** the root cause (rule-based; an LLM only narrates *why* for
    ambiguous checkout abandonment, it never decides).
 2. **Decides** a bounded intervention through a compliance-first policy engine:
-   retry, send an alternate payment link, send a reminder, escalate to a human, or
-   route to the risk team — with every decision checked against five guardrails
-   (no DND contact, no contact during quiet hours 9pm–8am IST, max 3 auto-retries,
-   a 60-day automated-pursuit ceiling, and cost bounded by expected recovered value).
+   retry, schedule a spaced-out mandate retry, send an alternate payment link, send
+   a reminder, escalate to a human, or route to the risk team — with every decision
+   checked against five guardrails (no DND contact, no contact during quiet hours
+   9pm–8am IST, max 3 auto-retries, a 60-day automated-pursuit ceiling, and cost
+   bounded by expected recovered value).
 3. **Acts**: creates a real Razorpay test-mode Payment Link when credentials are
    configured, or a seeded, reproducible simulation otherwise. Every send is logged,
-   never actually dispatched.
+   never actually dispatched. Human-escalated receivables get a generated Hinglish
+   call script for the collections agent.
 4. **Tracks promise-to-pay** commitments for human-escalated B2B receivables.
 
 Every step writes an audit entry — the diagnosis reasoning, the decision reasoning,
@@ -41,6 +43,21 @@ dashboard. The batch-level metrics report exactly what the brief asks for: money
 recovered, an honest breakdown by cause and channel, and a guardrail-violation count
 that should always read zero (see `RecoveryPipelineServiceTest`, which asserts this
 over a 200-event batch).
+
+## Coverage against the brief
+
+The Track 3 page names seven example directions. Each one maps to an identifiable
+piece of this codebase, not just a passing resemblance:
+
+| Brief's example direction | Where it lives |
+|---|---|
+| Payment degradation → root cause → recovery action | `DiagnosisService` + `PolicyEngine` + `ActionExecutionService`, for `FAILED_PAYMENT` events |
+| Checkout drop-off recovery | `ABANDONED_CHECKOUT` handling in `DiagnosisService` (LLM-narrated) + reminder intervention |
+| Failed-subscription recovery | `FAILED_MANDATE` events, diagnosed the same as payments but decided differently |
+| Mandate retry sequencer | `MandateRetrySequencer` — spaced retry cadence (+1/+3/+7 days) instead of an immediate same-pass retry |
+| B2B receivables chaser | `OVERDUE_RECEIVABLE` escalation tiers (gentle → escalation → legal) + `HUMAN_ESCALATION` |
+| Hinglish voice recovery | `CallScriptService` — generates the Hinglish call script a collections agent (or future voice bot) would read; voice synthesis itself is out of scope for this build |
+| Promise-to-pay tracker | `PromiseToPayService` |
 
 ## Tech stack
 
@@ -91,9 +108,11 @@ Opens on `http://localhost:5173`. Set `VITE_API_BASE_URL` if the backend isn't o
 mvn test
 ```
 
-15 tests: guardrail-by-guardrail unit tests on the policy engine, diagnosis
-rule-mapping tests, gateway-determinism tests, and one full-batch integration
-smoke test that asserts zero guardrail violations across 200 generated events.
+21 tests: guardrail-by-guardrail unit tests on the policy engine (including the
+mandate-retry-sequencer path), diagnosis rule-mapping tests, gateway-determinism
+tests, the Hinglish call-script offline-fallback test, and two full-batch
+integration tests — one asserting zero guardrail violations across 200 generated
+events, one asserting a same-seed batch recovers the identical amount on every run.
 
 **Demo flow**: start the backend, start the frontend, open the dashboard, enter
 the API key (`dev-local-key` by default — see `RECOUP_API_KEY` to change it),
@@ -114,6 +133,17 @@ loads while the session is still open. Caught it because
 `RecoveryPipelineServiceTest` runs the full batch-then-metrics path as one
 integration test — a unit test mocking the repository would have missed it, since
 the mock would've just handed back an already-populated in-memory list.
+
+Two more broke later, both self-inflicted by the same fix: making `RevenueEvent`
+ids unique per batch (to stop re-running the same seed from colliding on the
+database's primary key) accidentally made the *simulated recovery outcomes*
+non-reproducible too, because the simulator and promise-to-pay service were
+hashing that same salted id for their randomness. Same seed, same inputs,
+different "luck" every run. Fixed by splitting row identity (`id`, salted per
+batch) from a separate `contentKey` (derived from seed+index only, never salted)
+that the RNG keys off instead — caught by testing the exact property a user
+flagged when they noticed re-running the same seed gave different recovered
+amounts.
 
 ## Assumptions worth flagging
 

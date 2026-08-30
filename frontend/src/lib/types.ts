@@ -14,6 +14,7 @@ export interface CauseBreakdown {
 export interface InterventionBreakdown {
   intervention: string;
   count: number;
+  atRiskAmountPaise: number;
   costPaise: number;
   recoveredAmountPaise: number;
 }
@@ -80,6 +81,7 @@ export interface CaseDetail {
   decisionReasoning: string;
   estimatedCostPaise: number;
   estimatedRecoveryProbability: number;
+  scheduledFor: string | null;
   actionSuccess: boolean;
   actionDetail: string;
   recoveredAmountPaise: number;

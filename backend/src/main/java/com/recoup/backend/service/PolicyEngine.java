@@ -1,6 +1,8 @@
 package com.recoup.backend.service;
 
+import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -28,6 +30,7 @@ public class PolicyEngine {
     public static final int MAX_RETRIES = 3;
     public static final int MAX_AUTOMATED_PURSUIT_DAYS = 60;
     private static final long B2B_HUMAN_ESCALATION_THRESHOLD_PAISE = 1_000_000; // Rs 10,000
+    private static final DateTimeFormatter SCHEDULE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssxxx");
 
     private static final Map<InterventionType, Long> COST_PAISE = new EnumMap<>(InterventionType.class);
     // Documented assumptions, not measured -- swap for real historical rates once available.
@@ -40,6 +43,7 @@ public class PolicyEngine {
 
     static {
         COST_PAISE.put(InterventionType.RETRY_PAYMENT, 0L);
+        COST_PAISE.put(InterventionType.SCHEDULE_MANDATE_RETRY, 0L);
         COST_PAISE.put(InterventionType.SEND_ALT_PAYMENT_LINK, 0L);
         COST_PAISE.put(InterventionType.SEND_REMINDER_SMS, 15L);
         COST_PAISE.put(InterventionType.SEND_REMINDER_WHATSAPP, 35L);
@@ -90,7 +94,8 @@ public class PolicyEngine {
     }
 
     public GuardrailCheck guardrailMaxRetries(RevenueEvent event, InterventionType intervention) {
-        boolean violates = intervention == InterventionType.RETRY_PAYMENT && event.getAttemptCount() >= MAX_RETRIES;
+        boolean isRetry = intervention == InterventionType.RETRY_PAYMENT || intervention == InterventionType.SCHEDULE_MANDATE_RETRY;
+        boolean violates = isRetry && event.getAttemptCount() >= MAX_RETRIES;
         return new GuardrailCheck("max_retries_respected", !violates,
             "attemptCount=" + event.getAttemptCount() + ", max=" + MAX_RETRIES);
     }
@@ -120,6 +125,14 @@ public class PolicyEngine {
     }
 
     private InterventionType baseIntervention(RevenueEvent event, CauseCategory category) {
+        // A failed mandate is a bank-initiated background debit, not a live customer
+        // session -- it gets a scheduled, spaced-out retry cadence instead of an
+        // immediate same-pass retry (see MandateRetrySequencer).
+        if (event.getType() == EventType.FAILED_MANDATE && category == CauseCategory.TRANSIENT_RETRYABLE) {
+            return MandateRetrySequencer.hasRemainingRetries(event.getAttemptCount())
+                ? InterventionType.SCHEDULE_MANDATE_RETRY
+                : InterventionType.SEND_ALT_PAYMENT_LINK;
+        }
         return switch (category) {
             case FRAUD_SUSPECTED -> InterventionType.ROUTE_TO_RISK_TEAM;
             case TRANSIENT_RETRYABLE -> event.getAttemptCount() < MAX_RETRIES
@@ -163,10 +176,17 @@ public class PolicyEngine {
             expectedValue = 0.0;
         }
 
+        String scheduledFor = null;
+        if (intervention == InterventionType.SCHEDULE_MANDATE_RETRY) {
+            scheduledFor = SCHEDULE_FORMAT.format(
+                MandateRetrySequencer.nextRetryDate(event.getAttemptCount(), now).withZoneSameInstant(ZoneOffset.ofHoursMinutes(5, 30)));
+        }
+
         String reasoning = String.format(
-            "category=%s -> %s (attempt=%d, cost=%dp, p_recover=%.2f, expected_value=%.0fp)",
-            category, intervention, event.getAttemptCount(), cost, prob, expectedValue
+            "category=%s -> %s (attempt=%d, cost=%dp, p_recover=%.2f, expected_value=%.0fp)%s",
+            category, intervention, event.getAttemptCount(), cost, prob, expectedValue,
+            scheduledFor != null ? ", next_retry=" + scheduledFor : ""
         );
-        return new Decision(intervention, reasoning, cost, prob, expectedValue);
+        return new Decision(intervention, reasoning, cost, prob, expectedValue, scheduledFor);
     }
 }

@@ -78,7 +78,7 @@ export default function App() {
               rows={metrics.byIntervention.map((i) => ({
                 label: i.intervention,
                 count: i.count,
-                primaryPaise: Math.max(i.recoveredAmountPaise, i.costPaise, 1),
+                primaryPaise: i.atRiskAmountPaise,
                 recoveredPaise: i.recoveredAmountPaise,
               }))}
             />

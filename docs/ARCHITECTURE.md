@@ -11,11 +11,15 @@ operations, not a reconstruction after the fact.
 flowchart LR
     A[RevenueEvent] --> B[DiagnosisService]
     B -->|CauseCategory| C[PolicyEngine.decide]
+    C -->|"FAILED_MANDATE + retryable"| M[MandateRetrySequencer]
+    M -->|scheduledFor| C
     C -->|Decision + guardrails| D[ActionExecutionService]
+    D -->|HUMAN_ESCALATION + receivable| S[CallScriptService]
     D --> E{HUMAN_ESCALATION on a receivable?}
     E -->|yes| F[PromiseToPayService]
     E -->|no| G[RecoveryCase persisted]
     F --> G
+    S --> G
     B -.audit.-> H[(AuditEntry)]
     C -.audit.-> H
     D -.audit.-> H
@@ -28,11 +32,20 @@ flowchart LR
   LLM call — if Groq is unreachable or unconfigured, diagnosis is unaffected.
 - **PolicyEngine** is the only place an intervention is chosen. It is a plain Java
   class with no I/O, which is what makes `PolicyEngineTest` possible: every
-  guardrail is a pure function of `(RevenueEvent, InterventionType, now)`.
+  guardrail is a pure function of `(RevenueEvent, InterventionType, now)`. For a
+  `FAILED_MANDATE` diagnosed as transient-retryable, it defers to
+  **MandateRetrySequencer** instead of retrying immediately in the same pass.
+- **MandateRetrySequencer** is a pure, stateless utility: given an attempt count
+  and "now", it returns the next retry date on a fixed +1/+3/+7-day cadence (or
+  reports the sequence exhausted). No I/O, no persistence of its own — the
+  schedule is just a value on `Decision`, and it's up to the *next* batch run
+  (whenever that happens) to notice the retry is due.
 - **ActionExecutionService** executes exactly one intervention through
-  `PaymentGateway` (payment-related) or `MessagingService` (copy rendering) or an
-  internal queue log (human escalation / risk routing). Messaging is always
-  simulated — logged, never dispatched.
+  `PaymentGateway` (payment-related), `MessagingService` (copy rendering),
+  `CallScriptService` (Hinglish call script, only for `HUMAN_ESCALATION` on an
+  `OVERDUE_RECEIVABLE`), or an internal queue log (human escalation / risk
+  routing / scheduled retry). Messaging and call scripts are always
+  simulated/generated-only — logged, never dispatched or actually called.
 - **PromiseToPayService** only runs for `HUMAN_ESCALATION` on an
   `OVERDUE_RECEIVABLE`, simulating whether a verbal commitment from a collections
   call materializes.
@@ -58,7 +71,8 @@ erDiagram
     RecoveryCase ||--o{ AuditEntry : "one per pipeline stage"
 
     RevenueEvent {
-        string id PK
+        string id PK "salted per batch -- never collides across runs"
+        string contentKey "seed+index only -- what randomness keys off"
         enum type
         long amountPaise
         embedded Contact
@@ -70,7 +84,7 @@ erDiagram
         string eventId FK
         enum status
         embedded Diagnosis
-        embedded Decision
+        embedded Decision "includes scheduledFor, set only for SCHEDULE_MANDATE_RETRY"
         embedded ActionResult
         embedded Promise
         string batchId
@@ -104,12 +118,16 @@ used standalone (e.g. in `PolicyEngineTest`) where `reasoning` is the natural na
 `PaymentGateway` has two implementations, selected once at startup by
 `GatewayConfig` based on whether `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` are set:
 
-- `SimulatedPaymentGateway` seeds a `Random` from a SHA-256 hash of the event id,
-  so outcomes are reproducible across runs (same batch in, same recovered-amount
-  metrics out) without needing a real gateway call. Its success probability per
-  category is read from `PolicyEngine.recoveryProbabilityFor(...)` — one source of
-  truth, so the simulator and the policy engine's own expected-value math can't
-  drift apart.
+- `SimulatedPaymentGateway` seeds a `Random` from a SHA-256 hash of the event's
+  `contentKey` (deliberately *not* `id`, which is salted per batch to avoid
+  primary-key collisions and would otherwise make the same seed recover a
+  different amount on every run), so outcomes are reproducible across runs (same
+  seed in, same recovered-amount metrics out) without needing a real gateway
+  call. Its success probability per category is read from
+  `PolicyEngine.recoveryProbabilityFor(...)` — one source of truth, so the
+  simulator and the policy engine's own expected-value math can't drift apart.
+  `PromiseToPayService` follows the same `contentKey`-not-`id` rule for the same
+  reason.
 - `RazorpayTestModeGateway` creates a genuine Razorpay test-mode Payment Link
   (`razorpay-java`, `client.paymentLink.create(...)`). This is a real API call
   against Razorpay's test environment, not a mock.
@@ -133,3 +151,9 @@ used standalone (e.g. in `PolicyEngineTest`) where `reasoning` is the natural na
   key on mutating endpoints, sufficient for a single-merchant demo. A real
   deployment would authenticate per-merchant, matching the JWT/OAuth2 pattern
   already used in the author's other projects.
+- **Actual voice calls.** `CallScriptService` generates the Hinglish script a
+  collections agent would read; it does not place a call. Wiring real telephony
+  (outbound dialing, TTS, and ASR to actually run the call as a voice bot) is a
+  distinct, much larger integration (e.g. a telephony provider + speech stack)
+  that's out of scope for this build -- the script itself is the artifact a human
+  agent can use today, and is the natural first half of a future voice-bot build.

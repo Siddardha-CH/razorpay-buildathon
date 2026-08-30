@@ -2,6 +2,7 @@ package com.recoup.backend.model;
 
 public enum InterventionType {
     RETRY_PAYMENT,
+    SCHEDULE_MANDATE_RETRY,
     SEND_ALT_PAYMENT_LINK,
     SEND_REMINDER_SMS,
     SEND_REMINDER_WHATSAPP,

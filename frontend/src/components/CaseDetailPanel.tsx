@@ -35,11 +35,16 @@ export function CaseDetailPanel({ detail, onClose }: { detail: CaseDetail | null
             &middot; p(recover) {formatPercent(detail.estimatedRecoveryProbability)}
           </p>
           <p className="drawer__muted">{detail.decisionReasoning}</p>
+          {detail.scheduledFor && (
+            <p className="drawer__muted">
+              <strong>Next retry scheduled:</strong> {detail.scheduledFor}
+            </p>
+          )}
         </section>
 
         <section className="drawer__section">
           <h4>Action taken</h4>
-          <p>{detail.actionDetail}</p>
+          <p className="drawer__multiline">{detail.actionDetail}</p>
           <p className="drawer__muted">Recovered: {formatRupees(detail.recoveredAmountPaise)}</p>
         </section>
 

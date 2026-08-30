@@ -100,6 +100,25 @@ class PolicyEngineTest {
     }
 
     @Test
+    void schedulesRatherThanImmediatelyRetryingAFailedMandate() {
+        RevenueEvent event = TestFixtures.failedMandate("evt_mandate", "issuer_unavailable", 0, false);
+        Decision decision = policyEngine.decide(event, CauseCategory.TRANSIENT_RETRYABLE, daytime());
+
+        assertThat(decision.getIntervention()).isEqualTo(InterventionType.SCHEDULE_MANDATE_RETRY);
+        assertThat(decision.getScheduledFor()).isNotNull();
+        assertThat(policyEngine.guardrailMaxRetries(event, decision.getIntervention()).isPassed()).isTrue();
+    }
+
+    @Test
+    void givesUpAutomatedMandateRetryOnceTheSequenceIsExhausted() {
+        RevenueEvent event = TestFixtures.failedMandate("evt_mandate_exhausted", "issuer_unavailable", 3, false);
+        Decision decision = policyEngine.decide(event, CauseCategory.TRANSIENT_RETRYABLE, daytime());
+
+        assertThat(decision.getIntervention()).isEqualTo(InterventionType.SEND_ALT_PAYMENT_LINK);
+        assertThat(decision.getScheduledFor()).isNull();
+    }
+
+    @Test
     void allGuardrailsPassForAnOrdinaryRetryableCase() {
         RevenueEvent event = TestFixtures.failedPayment("evt_ordinary", "issuer_unavailable", 0, false);
         Decision decision = policyEngine.decide(event, CauseCategory.TRANSIENT_RETRYABLE, daytime());

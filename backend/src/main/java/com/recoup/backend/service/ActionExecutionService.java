@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 import com.recoup.backend.model.ActionResult;
 import com.recoup.backend.model.CauseCategory;
 import com.recoup.backend.model.Decision;
+import com.recoup.backend.model.EventType;
 import com.recoup.backend.model.InterventionType;
 import com.recoup.backend.model.RevenueEvent;
 
@@ -21,10 +22,12 @@ public class ActionExecutionService {
 
     private final PaymentGateway gateway;
     private final MessagingService messagingService;
+    private final CallScriptService callScriptService;
 
-    public ActionExecutionService(PaymentGateway gateway, MessagingService messagingService) {
+    public ActionExecutionService(PaymentGateway gateway, MessagingService messagingService, CallScriptService callScriptService) {
         this.gateway = gateway;
         this.messagingService = messagingService;
+        this.callScriptService = callScriptService;
     }
 
     public ActionResult execute(RevenueEvent event, CauseCategory category, Decision decision) {
@@ -34,6 +37,12 @@ public class ActionExecutionService {
             ActionResult result = gateway.retryPayment(event, category);
             String message = messagingService.render(event, intervention, category, "(auto-retry, no link)");
             return withDetail(result, message + " | " + result.getDetail());
+        }
+
+        if (intervention == InterventionType.SCHEDULE_MANDATE_RETRY) {
+            String detail = "[SCHEDULED] mandate retry queued for " + decision.getScheduledFor()
+                + " -- no gateway call made this pass (see MandateRetrySequencer)";
+            return new ActionResult(true, detail, 0, null);
         }
 
         if (CONTACT_INTERVENTIONS.contains(intervention)) {
@@ -47,7 +56,12 @@ public class ActionExecutionService {
         }
 
         if (intervention == InterventionType.HUMAN_ESCALATION) {
-            return new ActionResult(true, "[QUEUED] escalated " + event.getId() + " to collections/ops team for manual follow-up", 0, null);
+            String detail = "[QUEUED] escalated " + event.getId() + " to collections/ops team for manual follow-up";
+            if (event.getType() == EventType.OVERDUE_RECEIVABLE) {
+                String script = callScriptService.generateHinglishCallScript(event, category);
+                detail += "\nSuggested Hinglish call script for the agent:\n" + script;
+            }
+            return new ActionResult(true, detail, 0, null);
         }
         if (intervention == InterventionType.ROUTE_TO_RISK_TEAM) {
             return new ActionResult(true, "[QUEUED] routed " + event.getId() + " to risk team for manual fraud review; no recovery action taken", 0, null);

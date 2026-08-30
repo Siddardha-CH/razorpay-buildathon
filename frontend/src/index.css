@@ -370,6 +370,10 @@ body {
   font-size: 13px;
 }
 
+.drawer__multiline {
+  white-space: pre-line;
+}
+
 .audit-trail {
   list-style: none;
   margin: 0;

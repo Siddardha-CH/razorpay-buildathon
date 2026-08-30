@@ -28,6 +28,25 @@ public final class TestFixtures {
         return event;
     }
 
+    public static RevenueEvent failedMandate(String id, String declineReason, int attemptCount, boolean dnd) {
+        RevenueEvent event = new RevenueEvent();
+        event.setId(id);
+        event.setContentKey(id);
+        event.setType(EventType.FAILED_MANDATE);
+        event.setMerchantId("merchant_demo_01");
+        event.setCustomerId("cust_" + id);
+        event.setCustomerName("Test Subscriber");
+        event.setContact(new Contact("+919999999999", "test@example.com", true, dnd));
+        event.setAmountPaise(99900);
+        event.setCurrency("INR");
+        event.setCreatedAt("2026-08-29T10:00:00+05:30");
+        event.setPaymentMethod("upi");
+        event.setDeclineCode("BAD_REQUEST_ERROR");
+        event.setDeclineReason(declineReason);
+        event.setAttemptCount(attemptCount);
+        return event;
+    }
+
     public static RevenueEvent overdueReceivable(String id, int daysOverdue, boolean b2b, long amountPaise) {
         RevenueEvent event = new RevenueEvent();
         event.setId(id);

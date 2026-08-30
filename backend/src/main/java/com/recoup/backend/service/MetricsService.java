@@ -76,10 +76,11 @@ public class MetricsService {
             .map(entry -> new InterventionBreakdownDto(
                 entry.getKey().name(),
                 entry.getValue().size(),
+                entry.getValue().stream().mapToLong(c -> c.getEvent().getAmountPaise()).sum(),
                 entry.getValue().stream().mapToLong(c -> c.getDecision().getEstimatedCostPaise()).sum(),
                 entry.getValue().stream().mapToLong(c -> c.getActionResult().getRecoveredAmountPaise()).sum()
             ))
-            .sorted((a, b) -> Long.compare(b.recoveredAmountPaise(), a.recoveredAmountPaise()))
+            .sorted((a, b) -> Long.compare(b.atRiskAmountPaise(), a.atRiskAmountPaise()))
             .toList();
 
         return new MetricsDto(

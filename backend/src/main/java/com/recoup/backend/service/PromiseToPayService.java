@@ -37,10 +37,10 @@ public class PromiseToPayService {
         PROMISE_LIKELIHOOD.put(CauseCategory.RECEIVABLE_LEGAL_STAGE, 0.35);
     }
 
-    private Random seededRandom(String eventId, String salt) {
+    private Random seededRandom(String contentKey, String salt) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest((eventId + ":" + salt).getBytes(StandardCharsets.UTF_8));
+            byte[] hash = digest.digest((contentKey + ":" + salt).getBytes(StandardCharsets.UTF_8));
             long seed = 0;
             for (int i = 0; i < 8; i++) {
                 seed = (seed << 8) | (hash[i] & 0xff);
@@ -52,7 +52,7 @@ public class PromiseToPayService {
     }
 
     public Promise maybeRecordPromise(RevenueEvent event, CauseCategory category, ZonedDateTime now) {
-        Random rng = seededRandom(event.getId(), "ptp");
+        Random rng = seededRandom(event.getContentKey(), "ptp");
         double likelihood = PROMISE_LIKELIHOOD.getOrDefault(category, 0.0);
         if (rng.nextDouble() >= likelihood) {
             return new Promise(0, null, null);

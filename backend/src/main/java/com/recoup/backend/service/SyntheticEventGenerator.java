@@ -69,12 +69,14 @@ public class SyntheticEventGenerator {
         for (int i = 0; i < n; i++) {
             EventType type = pickEventType(rng);
             String eventId = String.format("evt_%s_%04d", runId, i);
+            String contentKey = String.format("%d_%04d", seed, i);
             Instant createdAt = now.minusSeconds(60L * 60 * (1 + rng.nextInt(240)));
             Contact contact = randomContact(rng);
             String name = FIRST_NAMES[rng.nextInt(FIRST_NAMES.length)] + " " + LAST_NAMES[rng.nextInt(LAST_NAMES.length)];
 
             RevenueEvent event = new RevenueEvent();
             event.setId(eventId);
+            event.setContentKey(contentKey);
             event.setType(type);
             event.setMerchantId("merchant_demo_01");
             event.setCustomerId("cust_" + i);

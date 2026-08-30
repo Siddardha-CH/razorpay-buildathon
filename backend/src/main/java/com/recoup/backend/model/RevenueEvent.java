@@ -16,6 +16,12 @@ public class RevenueEvent {
     @Id
     private String id;
 
+    /** Deterministic from (seed, index) alone -- unlike {@code id}, which is salted
+     *  per batch so rows never collide across runs. Anything that needs "same seed
+     *  in, same result out" (simulated recovery outcomes, promise-to-pay) should
+     *  key off this, not {@code id}. */
+    private String contentKey;
+
     @Enumerated(EnumType.STRING)
     private EventType type;
 
@@ -52,6 +58,14 @@ public class RevenueEvent {
 
     public void setId(String id) {
         this.id = id;
+    }
+
+    public String getContentKey() {
+        return contentKey;
+    }
+
+    public void setContentKey(String contentKey) {
+        this.contentKey = contentKey;
     }
 
     public EventType getType() {

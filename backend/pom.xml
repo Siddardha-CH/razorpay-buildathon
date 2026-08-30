@@ -52,6 +52,14 @@
             <version>1.4.6</version>
         </dependency>
 
+        <!-- Auto-loads backend/.env (git-ignored) into the Spring environment for local dev,
+             so secrets never need to be exported by hand or committed. -->
+        <dependency>
+            <groupId>me.paulschwarz</groupId>
+            <artifactId>spring-dotenv</artifactId>
+            <version>4.0.0</version>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

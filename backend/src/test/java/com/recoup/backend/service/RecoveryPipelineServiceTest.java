@@ -57,11 +57,15 @@ class RecoveryPipelineServiceTest {
     }
 
     @Test
-    void runningTheSameSeedTwiceDoesNotCollideOnEventId() {
-        // Regression test: event ids used to be derived from (seed, index) alone, so
-        // running the same seed a second time against a database that already held the
-        // first run's rows violated RecoveryCase's unique event_id constraint. Ids are
-        // now salted per-batch while `seed` still determines the generated content.
+    void runningTheSameSeedTwiceGivesIdenticalResultsUnderDifferentRowIds() {
+        // Regression test, two bugs in one: (1) event ids used to be derived from
+        // (seed, index) alone, so a second run with the same seed against a database
+        // that already held the first run's rows violated RecoveryCase's unique
+        // event_id constraint; (2) fixing that by salting ids per batch then broke
+        // reproducibility, because SimulatedPaymentGateway/PromiseToPayService keyed
+        // their outcome RNG off that same salted id -- "same seed" stopped meaning
+        // "same recovered amount". RevenueEvent.contentKey (seed+index only, no batch
+        // salt) now backs the RNG instead, so both bugs stay fixed at once.
         ZonedDateTime now = ZonedDateTime.now(ZoneOffset.UTC);
 
         String firstBatchId = RecoveryPipelineService.newBatchId();
@@ -72,5 +76,13 @@ class RecoveryPipelineServiceTest {
 
         assertThat(caseRepository.findByBatchId(firstBatchId)).hasSize(20);
         assertThat(caseRepository.findByBatchId(secondBatchId)).hasSize(20);
+
+        MetricsDto first = metricsService.forBatch(firstBatchId);
+        MetricsDto second = metricsService.forBatch(secondBatchId);
+        assertThat(second.atRiskAmountPaise()).isEqualTo(first.atRiskAmountPaise());
+        assertThat(second.recoveredAmountPaise())
+            .as("same seed must recover the same amount every run, even though row ids differ")
+            .isEqualTo(first.recoveredAmountPaise());
+        assertThat(second.recoveredCount()).isEqualTo(first.recoveredCount());
     }
 }

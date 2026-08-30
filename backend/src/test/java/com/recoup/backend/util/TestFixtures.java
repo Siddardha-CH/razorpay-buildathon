@@ -12,6 +12,7 @@ public final class TestFixtures {
     public static RevenueEvent failedPayment(String id, String declineReason, int attemptCount, boolean dnd) {
         RevenueEvent event = new RevenueEvent();
         event.setId(id);
+        event.setContentKey(id);
         event.setType(EventType.FAILED_PAYMENT);
         event.setMerchantId("merchant_demo_01");
         event.setCustomerId("cust_" + id);
@@ -30,6 +31,7 @@ public final class TestFixtures {
     public static RevenueEvent overdueReceivable(String id, int daysOverdue, boolean b2b, long amountPaise) {
         RevenueEvent event = new RevenueEvent();
         event.setId(id);
+        event.setContentKey(id);
         event.setType(EventType.OVERDUE_RECEIVABLE);
         event.setMerchantId("merchant_demo_01");
         event.setCustomerId("cust_" + id);

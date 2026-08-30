@@ -5,6 +5,7 @@ import java.util.NoSuchElementException;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -34,9 +35,11 @@ public class CaseController {
                                       @RequestParam(required = false) String status,
                                       @RequestParam(defaultValue = "0") int page,
                                       @RequestParam(defaultValue = "50") int size) {
-        Page<RecoveryCase> result = caseRepository.findByBatchId(batchId, PageRequest.of(page, size));
+        Pageable pageable = PageRequest.of(page, size);
+        Page<RecoveryCase> result = status == null
+            ? caseRepository.findByBatchId(batchId, pageable)
+            : caseRepository.findByBatchIdAndStatus(batchId, CaseStatus.valueOf(status), pageable);
         return result.getContent().stream()
-            .filter(c -> status == null || c.getStatus() == CaseStatus.valueOf(status))
             .map(CaseSummaryDto::from)
             .toList();
     }

@@ -13,7 +13,7 @@ public interface RecoveryCaseRepository extends JpaRepository<RecoveryCase, Long
 
     Page<RecoveryCase> findByBatchId(String batchId, Pageable pageable);
 
-    List<RecoveryCase> findByBatchId(String batchId);
+    Page<RecoveryCase> findByBatchIdAndStatus(String batchId, CaseStatus status, Pageable pageable);
 
-    List<RecoveryCase> findByStatus(CaseStatus status);
+    List<RecoveryCase> findByBatchId(String batchId);
 }

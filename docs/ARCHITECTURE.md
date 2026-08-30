@@ -132,6 +132,25 @@ used standalone (e.g. in `PolicyEngineTest`) where `reasoning` is the natural na
   (`razorpay-java`, `client.paymentLink.create(...)`). This is a real API call
   against Razorpay's test environment, not a mock.
 
+## Request-boundary hardening
+
+Two things found by deliberately trying to break the API, not by inspection:
+
+- `GET /api/cases` used to paginate *before* filtering by status, so a status
+  filter only ever looked inside whatever one page happened to return --
+  correct by accident for small batches, silently wrong for anything larger
+  than one page. Fixed by pushing the filter into the query
+  (`findByBatchIdAndStatus`) instead of filtering the page's contents in
+  memory. `RecoveryCaseRepositoryTest` proves `getTotalElements()` reflects
+  every matching row, not just what fits on the requested page.
+- `POST /api/batches/run`'s `size` had no upper bound -- the whole batch runs
+  inside one HTTP request and one transaction, so an unbounded size is a
+  self-inflicted denial of service on a single-instance demo server. Bounded
+  to 1-2000 via `@Validated` + `@Min`/`@Max` (the `spring-boot-starter-validation`
+  dependency was already pulled in but unused until this). Malformed inputs
+  generally (bad status enum values, a non-numeric case id) now return 400
+  through `ApiExceptionHandler` instead of leaking a 500.
+
 ## Extension points (explicitly out of scope for this build)
 
 - **Resolving real payment outcomes.** `RazorpayTestModeGateway` reports a created

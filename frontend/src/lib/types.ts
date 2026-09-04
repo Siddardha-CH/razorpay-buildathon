@@ -2,6 +2,20 @@ export interface BatchRunResponse {
   batchId: string;
   totalEvents: number;
   gatewayMode: string;
+  modelTrained: boolean;
+  modelTrainingSamples: number;
+}
+
+export interface CategoryProbability {
+  category: string;
+  assumedProbability: number;
+  currentEstimate: number;
+}
+
+export interface ModelStatus {
+  trained: boolean;
+  trainingSamples: number;
+  byCategory: CategoryProbability[];
 }
 
 export interface CauseBreakdown {

@@ -23,7 +23,14 @@ import com.recoup.backend.model.RevenueEvent;
  *  This is the one class every money-relevant decision passes through. It is
  *  deliberately NOT an LLM: every rule here is a plain method you can unit-test
  *  and a human can audit line by line. DiagnosisService may use an LLM to
- *  narrate *why*; this class never does. */
+ *  narrate *why*; this class never does.
+ *
+ *  The one number it doesn't compute itself is p_recover: that comes from an
+ *  injected {@link RecoveryProbabilityEstimator} (a logistic regression model
+ *  trained on real outcomes, falling back to assumed constants until there's
+ *  enough history -- see MlRecoveryProbabilityEstimator). Which intervention
+ *  gets chosen, and every guardrail applied to it, stays this class's rule
+ *  code regardless of where that one number came from. */
 @Service
 public class PolicyEngine {
 
@@ -33,8 +40,6 @@ public class PolicyEngine {
     private static final DateTimeFormatter SCHEDULE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssxxx");
 
     private static final Map<InterventionType, Long> COST_PAISE = new EnumMap<>(InterventionType.class);
-    // Documented assumptions, not measured -- swap for real historical rates once available.
-    private static final Map<CauseCategory, Double> RECOVERY_PROBABILITY = new EnumMap<>(CauseCategory.class);
 
     private static final Set<InterventionType> CONTACT_INTERVENTIONS = Set.of(
         InterventionType.SEND_ALT_PAYMENT_LINK, InterventionType.SEND_REMINDER_SMS,
@@ -53,27 +58,18 @@ public class PolicyEngine {
         COST_PAISE.put(InterventionType.MARK_DO_NOT_CONTACT, 0L);
         COST_PAISE.put(InterventionType.STOP_PURSUIT, 0L);
         COST_PAISE.put(InterventionType.DEFER_QUIET_HOURS, 0L);
-
-        RECOVERY_PROBABILITY.put(CauseCategory.TRANSIENT_RETRYABLE, 0.55);
-        RECOVERY_PROBABILITY.put(CauseCategory.HARD_DECLINE_NEEDS_NEW_INSTRUMENT, 0.35);
-        RECOVERY_PROBABILITY.put(CauseCategory.CUSTOMER_ABANDONED, 0.20);
-        RECOVERY_PROBABILITY.put(CauseCategory.RECEIVABLE_GENTLE_STAGE, 0.60);
-        RECOVERY_PROBABILITY.put(CauseCategory.RECEIVABLE_ESCALATION_STAGE, 0.35);
-        RECOVERY_PROBABILITY.put(CauseCategory.RECEIVABLE_LEGAL_STAGE, 0.15);
-        RECOVERY_PROBABILITY.put(CauseCategory.FRAUD_SUSPECTED, 0.0);
     }
 
     private final int quietHourStart;
     private final int quietHourEnd;
+    private final RecoveryProbabilityEstimator probabilityEstimator;
 
     public PolicyEngine(@Value("${app.quiet-hour-start:21}") int quietHourStart,
-                         @Value("${app.quiet-hour-end:8}") int quietHourEnd) {
+                         @Value("${app.quiet-hour-end:8}") int quietHourEnd,
+                         RecoveryProbabilityEstimator probabilityEstimator) {
         this.quietHourStart = quietHourStart;
         this.quietHourEnd = quietHourEnd;
-    }
-
-    public static double recoveryProbabilityFor(CauseCategory category) {
-        return RECOVERY_PROBABILITY.getOrDefault(category, 0.0);
+        this.probabilityEstimator = probabilityEstimator;
     }
 
     public boolean withinQuietHours(ZonedDateTime now) {
@@ -166,7 +162,7 @@ public class PolicyEngine {
             && intervention != InterventionType.STOP_PURSUIT
             && intervention != InterventionType.ROUTE_TO_RISK_TEAM
             && intervention != InterventionType.DEFER_QUIET_HOURS;
-        double prob = active ? RECOVERY_PROBABILITY.getOrDefault(category, 0.0) : 0.0;
+        double prob = active ? probabilityEstimator.estimate(event, category) : 0.0;
         double expectedValue = event.getAmountPaise() * prob;
 
         if (active && cost > expectedValue) {

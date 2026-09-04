@@ -11,6 +11,7 @@ operations, not a reconstruction after the fact.
 flowchart LR
     A[RevenueEvent] --> B[DiagnosisService]
     B -->|CauseCategory| C[PolicyEngine.decide]
+    P[MlRecoveryProbabilityEstimator] -->|p_recover| C
     C -->|"FAILED_MANDATE + retryable"| M[MandateRetrySequencer]
     M -->|scheduledFor| C
     C -->|Decision + guardrails| D[ActionExecutionService]
@@ -20,6 +21,7 @@ flowchart LR
     E -->|no| G[RecoveryCase persisted]
     F --> G
     S --> G
+    G -.trains on past rows.-> P
     B -.audit.-> H[(AuditEntry)]
     C -.audit.-> H
     D -.audit.-> H
@@ -49,6 +51,8 @@ flowchart LR
 - **PromiseToPayService** only runs for `HUMAN_ESCALATION` on an
   `OVERDUE_RECEIVABLE`, simulating whether a verbal commitment from a collections
   call materializes.
+- **MlRecoveryProbabilityEstimator** supplies the one number PolicyEngine doesn't
+  compute itself: p_recover. See "Machine learning" below.
 
 ## Why a policy engine instead of an LLM here
 
@@ -62,6 +66,63 @@ and a final cost-vs-expected-value check. Every one of those five guardrails has
 its own method and its own test. The LLM's job is narration (`DiagnosisService`)
 and copy personalization (`MessagingService`) — text a human reviews, not money
 that moves.
+
+## Machine learning: recovery-probability model
+
+`AssumedRecoveryRates` started as the only source for p_recover: seven hand-picked
+constants, one per `CauseCategory`, documented as assumptions rather than measured
+rates. `MlRecoveryProbabilityEstimator` replaces that with a real model wherever
+there's enough data to trust one, while keeping the constants as the honest
+fallback -- the estimator interface (`RecoveryProbabilityEstimator`) means
+`PolicyEngine` doesn't know or care which one is answering.
+
+**Model**: `LogisticRegressionModel` -- sigmoid(w . x), fit by batch gradient
+descent with L2 regularization, implemented in ~70 lines of plain Java. No ML
+library. The reason isn't "we didn't have time to add one" -- it's that this
+model's entire job is to hand `PolicyEngine` one interpretable number for a
+guardrail check, and a coefficient vector you can print and read off (`model.getWeights()`)
+is worth more here than a marginally better black box would be. Same
+reasoning as keeping the LLM out of `PolicyEngine` itself.
+
+**Features** (`RecoveryFeatures`, 12 dimensions): a bias term, a one-hot
+encoding of `CauseCategory` (7 dims), and four scaled numeric features --
+log(amount), days overdue, attempt count, B2B flag. One unified model across
+all categories rather than one model per category, so it can learn cross-category
+structure (e.g. "large amounts recover less often") on top of each category's
+own baseline.
+
+**Training data**: `MlRecoveryProbabilityEstimator.TRAINABLE` is a deliberately
+narrow set of interventions -- `RETRY_PAYMENT`, `SEND_ALT_PAYMENT_LINK`, the three
+reminder channels, `HUMAN_ESCALATION`. Excluded on purpose:
+- `MARK_DO_NOT_CONTACT` / `STOP_PURSUIT` / `ROUTE_TO_RISK_TEAM` / `DEFER_QUIET_HOURS`
+  -- no recovery attempt happened, so there's no outcome to learn from.
+- `SCHEDULE_MANDATE_RETRY` -- the outcome is *censored*: it's scheduled for a
+  future batch run, and "not recovered yet" is not the same label as "failed".
+  Training on these as negatives would teach the model that mandates never recover.
+
+Label is simply `recoveredAmountPaise > 0`. Below `MIN_TRAINING_SAMPLES` (30),
+`trainOn(...)` is a no-op and the estimator stays on `AssumedRecoveryRates`.
+
+**Retraining cadence**: synchronous, at the top of every `POST /api/batches/run`,
+on all qualifying history *before* that batch's own events are generated -- see
+`BatchController.run()`. Fine at this scale (a few thousand rows, gradient descent
+in low milliseconds); not how you'd run it against a real production table (see
+Extension points).
+
+**A bug this approach caught, worth walking through**: after the first real
+training run, `/api/model/status` showed `FRAUD_SUSPECTED` at ~37% predicted
+recovery against an assumed 0%. Root cause: `FRAUD_SUSPECTED` cases are always
+routed via `ROUTE_TO_RISK_TEAM`, which is excluded from `TRAINABLE` -- so that
+category's one-hot weight never receives a gradient update and sits at exactly
+the zero it was initialized to. At prediction time, the *other* learned weights
+(bias, amount, etc., fit from every non-fraud example) still contribute, so the
+model produced a number anyway -- a textbook case of a model extrapolating past
+its own training distribution instead of admitting it. `PolicyEngine` was never
+actually at risk (fraud's path never reads the probability at all: see the
+`active` flag), but the display was misleading, and a differently-wired model
+consulted more directly could have made a real mistake here. Fixed by pinning
+`FRAUD_SUSPECTED` to `AssumedRecoveryRates` explicitly, regardless of training
+state, and locked in with a regression test.
 
 ## Data model
 
@@ -124,10 +185,11 @@ used standalone (e.g. in `PolicyEngineTest`) where `reasoning` is the natural na
   different amount on every run), so outcomes are reproducible across runs (same
   seed in, same recovered-amount metrics out) without needing a real gateway
   call. Its success probability per category is read from
-  `PolicyEngine.recoveryProbabilityFor(...)` — one source of truth, so the
-  simulator and the policy engine's own expected-value math can't drift apart.
-  `PromiseToPayService` follows the same `contentKey`-not-`id` rule for the same
-  reason.
+  `AssumedRecoveryRates.forCategory(...)` -- the same ground truth
+  `MlRecoveryProbabilityEstimator` is trying to learn to approximate from
+  nothing but observed (features, outcome) pairs, the same setup a model
+  trained on real historical data would face. `PromiseToPayService` follows
+  the same `contentKey`-not-`id` rule for the same reason.
 - `RazorpayTestModeGateway` creates a genuine Razorpay test-mode Payment Link
   (`razorpay-java`, `client.paymentLink.create(...)`). This is a real API call
   against Razorpay's test environment, not a mock.
@@ -163,9 +225,13 @@ Two things found by deliberately trying to break the API, not by inspection:
   WhatsApp/email provider is a credentials-and-compliance question (opt-in
   verification, template approval on WhatsApp Business API) that's out of scope
   for a hackathon build but is a natural next step.
-- **Measured recovery probabilities.** Swap the assumed constants in
-  `PolicyEngine.RECOVERY_PROBABILITY` for a model trained on real historical
-  outcomes once enough batches have run through the real gateway.
+- **Production-scale model retraining.** `MlRecoveryProbabilityEstimator` retrains
+  synchronously inside every batch-run request, which is fine at this scale but
+  wouldn't be how you'd run it against a real, growing production table --
+  that would want a scheduled/async retraining job instead, plus a held-out
+  validation split and drift monitoring, none of which a hackathon-scale demo
+  needs. The model itself already trains on real (simulated) historical
+  outcomes, not just assumed constants -- see "Machine learning" above.
 - **JWT/OAuth2 on the API.** The current gate (`ApiKeyFilter`) is a single shared
   key on mutating endpoints, sufficient for a single-merchant demo. A real
   deployment would authenticate per-merchant, matching the JWT/OAuth2 pattern

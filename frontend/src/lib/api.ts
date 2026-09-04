@@ -1,4 +1,4 @@
-import type { BatchRunResponse, CaseDetail, CaseSummary, Metrics } from "./types";
+import type { BatchRunResponse, CaseDetail, CaseSummary, Metrics, ModelStatus } from "./types";
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080";
 
@@ -29,4 +29,8 @@ export function listCases(batchId: string, status?: string, page = 0, size = 200
 
 export function getCaseDetail(id: number): Promise<CaseDetail> {
   return fetch(`${BASE_URL}/api/cases/${id}`).then((r) => handle<CaseDetail>(r));
+}
+
+export function getModelStatus(): Promise<ModelStatus> {
+  return fetch(`${BASE_URL}/api/model/status`).then((r) => handle<ModelStatus>(r));
 }

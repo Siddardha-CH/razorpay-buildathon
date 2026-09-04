@@ -30,7 +30,9 @@ one:
    a reminder, escalate to a human, or route to the risk team — with every decision
    checked against five guardrails (no DND contact, no contact during quiet hours
    9pm–8am IST, max 3 auto-retries, a 60-day automated-pursuit ceiling, and cost
-   bounded by expected recovered value).
+   bounded by expected recovered value, where the recovery probability behind that
+   last check comes from a logistic regression model trained on the system's own
+   past outcomes — see "Machine learning" below).
 3. **Acts**: creates a real Razorpay test-mode Payment Link when credentials are
    configured, or a seeded, reproducible simulation otherwise. Every send is logged,
    never actually dispatched. Human-escalated receivables get a generated Hinglish
@@ -59,10 +61,48 @@ piece of this codebase, not just a passing resemblance:
 | Hinglish voice recovery | `CallScriptService` — generates the Hinglish call script a collections agent (or future voice bot) would read; voice synthesis itself is out of scope for this build |
 | Promise-to-pay tracker | `PromiseToPayService` |
 
+## Machine learning
+
+Every guardrail check that weighs "is this intervention worth its cost" needs a
+recovery probability. That number used to be a flat, hand-picked constant per
+cause category — honest about being an assumption, but still a guess. It's now
+a real logistic regression model (`LogisticRegressionModel`): hand-implemented
+in plain Java (sigmoid + batch gradient descent + L2 regularization, no ML
+library), trained on every past case where a recovery was actually attempted
+and a terminal outcome observed — amount, days overdue, attempt count, B2B
+flag, and cause category as features.
+
+Deliberately **not** an LLM, and deliberately a model you can print the
+coefficients of and defend line by line — the same reasoning as `PolicyEngine`
+itself (see `docs/ARCHITECTURE.md`, "Why a policy engine instead of an LLM
+here"): the model produces one interpretable number, PolicyEngine's guardrails
+still make every actual decision.
+
+- **Cold start**: below 30 observed outcomes, `MlRecoveryProbabilityEstimator`
+  falls back to the same assumed constants as before (`AssumedRecoveryRates`) —
+  it never pretends to have learned something it hasn't.
+- **Retraining**: happens at the start of every batch run, on everything
+  observed *before* that batch, so a batch never trains on its own outcomes.
+- **Watch it learn**: the dashboard's "Recovery-probability model" panel shows
+  the model's current per-category estimate next to the assumed constant it
+  started from — run a couple of batches and watch them diverge as real
+  (simulated) outcomes accumulate.
+- **A bug this caught**: the first trained model predicted ~37% recovery for
+  fraud-suspected cases despite zero training examples in that category (fraud
+  is always routed to the risk team, never actively pursued) — its weight for
+  that category sat at exactly zero, and the model quietly extrapolated a
+  meaningless number from unrelated features instead. `PolicyEngine` itself was
+  never affected (fraud's `ROUTE_TO_RISK_TEAM` path never consults the
+  probability at all), but the model-status display was misleading. Now
+  `FRAUD_SUSPECTED` is explicitly pinned to 0 regardless of training state —
+  see `MlRecoveryProbabilityEstimatorTest.neverExtrapolatesANonZeroProbabilityForFraudSuspectedEvenAfterTraining`.
+
 ## Tech stack
 
 - **Backend**: Java 17, Spring Boot 3.3, Spring Data JPA, H2 (file-based, zero
   setup) with a MySQL profile for a real deployment, JUnit 5 + AssertJ.
+- **ML**: logistic regression, hand-implemented in plain Java (no ML library) —
+  see "Machine learning" above.
 - **Payment gateway**: `razorpay-java` against the real Payment Links API in test
   mode, behind a `PaymentGateway` interface with a deterministic simulator fallback.
 - **LLM**: Groq's OpenAI-compatible chat completions endpoint (`java.net.http.HttpClient`,
@@ -108,16 +148,21 @@ Opens on `http://localhost:5173`. Set `VITE_API_BASE_URL` if the backend isn't o
 mvn test
 ```
 
-21 tests: guardrail-by-guardrail unit tests on the policy engine (including the
+37 tests: guardrail-by-guardrail unit tests on the policy engine (including the
 mandate-retry-sequencer path), diagnosis rule-mapping tests, gateway-determinism
-tests, the Hinglish call-script offline-fallback test, and two full-batch
-integration tests — one asserting zero guardrail violations across 200 generated
-events, one asserting a same-seed batch recovers the identical amount on every run.
+tests, the Hinglish call-script offline-fallback test, the ML model's own tests
+(a held-out-accuracy check on synthetic separable data, the fraud-extrapolation
+regression test, an end-to-end "does a real batch produce enough history to
+train on" test), request-boundary/validation tests, and full-batch integration
+tests — including one asserting zero guardrail violations across 200 generated
+events and one asserting a same-seed batch recovers the identical amount every run.
 
 **Demo flow**: start the backend, start the frontend, open the dashboard, enter
 the API key (`dev-local-key` by default — see `RECOUP_API_KEY` to change it),
-click "Run recovery batch", and click into any case to see its full diagnosis →
-decision → action → audit trail.
+click "Run recovery batch" a couple of times, and: click into any case to see
+its full diagnosis → decision → action → audit trail, and check the
+"Recovery-probability model" panel to see the learned estimates diverge from
+the assumed constants as more batches run.
 
 ## What broke, and how I got out
 
@@ -145,12 +190,20 @@ that the RNG keys off instead — caught by testing the exact property a user
 flagged when they noticed re-running the same seed gave different recovered
 amounts.
 
+A fourth broke after adding the ML model: the trained model predicted ~37%
+recovery for fraud-suspected cases with zero training examples in that
+category, extrapolating from unrelated features instead of admitting it had
+never seen one. Caught by inspecting `/api/model/status` after two real batch
+runs, not by a test written in advance — fixed by pinning `FRAUD_SUSPECTED` to
+0 explicitly, then wrote the test afterward (see "Machine learning" above).
+
 ## Assumptions worth flagging
 
-- Recovery probabilities per cause category (`PolicyEngine.RECOVERY_PROBABILITY`)
-  are documented, reasonable-looking assumptions, not measured historical rates —
+- Recovery probabilities per cause category (`AssumedRecoveryRates`) are
+  documented, reasonable-looking assumptions, not measured historical rates —
   called out explicitly in code and in the metrics, per the track's "honest
-  metrics" bar.
+  metrics" bar. They're also exactly what the ML model (see "Machine learning"
+  above) is trying to learn past, given enough real outcomes.
 - The simulator resolves an outcome (paid / not paid) synchronously so a batch run
   is demoable in seconds. The real Razorpay gateway instead creates a genuine
   pending Payment Link — resolving whether the customer actually paid requires a

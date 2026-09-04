@@ -15,7 +15,13 @@ import com.recoup.backend.model.RevenueEvent;
  *  which is salted per batch to avoid primary-key collisions and would
  *  otherwise make "same seed" batches recover different amounts on every run.
  *  contentKey is derived from (seed, index) alone, so a batch run is fully
- *  reproducible: same seed in, same recovered-amount metrics out, every time. */
+ *  reproducible: same seed in, same recovered-amount metrics out, every time.
+ *
+ *  {@link AssumedRecoveryRates} here plays the role of ground truth: it's the
+ *  "real world" this simulator rolls against, and what
+ *  MlRecoveryProbabilityEstimator is trying to learn to approximate from
+ *  nothing but the (features, observed outcome) pairs this class produces --
+ *  the same setup a model trained on real historical data would face. */
 public class SimulatedPaymentGateway implements PaymentGateway {
 
     @Override
@@ -39,7 +45,7 @@ public class SimulatedPaymentGateway implements PaymentGateway {
 
     private ActionResult resolve(RevenueEvent event, CauseCategory category, String label) {
         Random rng = seededRandom(event.getContentKey());
-        double prob = PolicyEngine.recoveryProbabilityFor(category);
+        double prob = AssumedRecoveryRates.forCategory(category);
         boolean success = rng.nextDouble() < prob;
         String ref = "sim_" + label + "_" + event.getId();
         if (success) {

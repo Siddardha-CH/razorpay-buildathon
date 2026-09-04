@@ -1,16 +1,18 @@
 import { useState } from "react";
-import { getCaseDetail, getMetrics, listCases, runBatch } from "./lib/api";
-import type { CaseDetail, CaseSummary, Metrics } from "./lib/types";
+import { getCaseDetail, getMetrics, getModelStatus, listCases, runBatch } from "./lib/api";
+import type { CaseDetail, CaseSummary, Metrics, ModelStatus } from "./lib/types";
 import { ControlBar } from "./components/ControlBar";
 import { KpiTiles } from "./components/KpiTiles";
 import { BreakdownBars } from "./components/BreakdownBars";
 import { CasesTable } from "./components/CasesTable";
 import { CaseDetailPanel } from "./components/CaseDetailPanel";
+import { ModelPanel } from "./components/ModelPanel";
 
 export default function App() {
   const [batchId, setBatchId] = useState<string | null>(null);
   const [gatewayMode, setGatewayMode] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
+  const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
   const [cases, setCases] = useState<CaseSummary[]>([]);
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [selectedCase, setSelectedCase] = useState<CaseDetail | null>(null);
@@ -24,9 +26,10 @@ export default function App() {
       const batch = await runBatch(size, seed, apiKey);
       setBatchId(batch.batchId);
       setGatewayMode(batch.gatewayMode);
-      const [m, c] = await Promise.all([getMetrics(batch.batchId), listCases(batch.batchId)]);
+      const [m, c, model] = await Promise.all([getMetrics(batch.batchId), listCases(batch.batchId), getModelStatus()]);
       setMetrics(m);
       setCases(c);
+      setModelStatus(model);
       setStatusFilter("ALL");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -83,6 +86,7 @@ export default function App() {
               }))}
             />
           </div>
+          {modelStatus && <ModelPanel status={modelStatus} />}
           <CasesTable
             cases={cases}
             statusFilter={statusFilter}

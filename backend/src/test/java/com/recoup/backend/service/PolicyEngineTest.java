@@ -20,7 +20,7 @@ import com.recoup.backend.util.TestFixtures;
  *  receivable past the compliant window. Each test locks in one guardrail. */
 class PolicyEngineTest {
 
-    private final PolicyEngine policyEngine = new PolicyEngine(21, 8);
+    private final PolicyEngine policyEngine = new PolicyEngine(21, 8, new StaticRecoveryProbabilityEstimator());
 
     private static ZonedDateTime daytime() {
         return ZonedDateTime.of(2026, 8, 29, 14, 0, 0, 0, ZoneOffset.UTC); // outside quiet hours
